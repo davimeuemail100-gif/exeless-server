@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Exeless TV Player</title>
+    <style>
+        body { margin: 0; background: #050505; color: white; overflow: hidden; font-family: monospace; text-align: center; }
+        #pairing-screen { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); padding: 40px; border: 2px solid #00ffff; border-radius: 10px; }
+        input { font-size: 40px; width: 250px; text-transform: uppercase; text-align: center; background: #111; color: #00ffff; border: 2px solid #333; padding: 10px; }
+        button { font-size: 20px; padding: 10px 20px; margin-top: 20px; cursor: pointer; background: #00ffff; color: #000; border: none; font-weight: bold; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+    </style>
+</head>
+<body>
+    <div id="pairing-screen">
+        <h1>Conectar Celular (Microfone)</h1>
+        <p>Digite o código gerado no aplicativo:</p>
+        <input type="text" id="codigo-input" maxlength="5" placeholder="XXXXX">
+        <br>
+        <button onclick="conectar()">CONECTAR</button>
+        <p id="status" style="color: #0f0;"></p>
+    </div>
+
+    <canvas id="tv-canvas"></canvas>
+    <audio id="audio-player" autoplay></audio>
+
+    <script>
+        // --- CONEXÃO E ÁUDIO ---
+        const ws = new WebSocket("wss://SEU-LINK-AQUI.onrender.com"); // COLOQUE O LINK DO RENDER AQUI
+        let peerConnection;
+        let codigoAtual = "";
+
+        ws.onmessage = async (event) => {
+            const data = JSON.parse(event.data);
+            if (data.tipo === 'erro') document.getElementById('status').innerText = "❌ " + data.msg;
+            if (data.tipo === 'sucesso_conexao') document.getElementById('status').innerText = "✅ Conectado! Áudio ativo.";
+            
+            if (data.tipo === 'offer') {
+                peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+                peerConnection.ontrack = (e) => { document.getElementById('audio-player').srcObject = e.streams[0]; };
+                peerConnection.onicecandidate = (e) => {
+                    if (e.candidate) ws.send(JSON.stringify({ tipo: 'ice', remetente: 'tv', codigo: codigoAtual, ice: e.candidate }));
+                };
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                ws.send(JSON.stringify({ tipo: 'answer', remetente: 'tv', codigo: codigoAtual, answer: answer }));
+            }
+            if (data.tipo === 'ice' && peerConnection) await peerConnection.addIceCandidate(new RTCIceCandidate(data.ice));
+        };
+
+        function conectar() {
+            codigoAtual = document.getElementById('codigo-input').value.toUpperCase();
+            ws.send(JSON.stringify({ tipo: 'conectar_codigo', codigo: codigoAtual }));
+            document.getElementById('status').innerText = "Buscando jogador...";
+        }
+
+        // --- RENDERIZAÇÃO 2D (Para TV fraca) ---
+        const canvas = document.getElementById('tv-canvas');
+        const ctx = canvas.getContext('2d');
+        let players = {};
+
+        function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+        window.onresize = resize; resize();
+
+        ws.addEventListener('message', (event) => {
+            const data = JSON.parse(event.data);
+            if (data.tipo === 'mover') {
+                players[data.user] = { x: data.x, z: data.z };
+            }
+        });
+
+        function render() {
+            ctx.fillStyle = "#111"; // Chão
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = "#555"; // Grade
+            for(let i=0; i<canvas.width; i+=100) ctx.fillRect(i, 0, 2, canvas.height);
+
+            for (let user in players) {
+                let p = players[user];
+                ctx.fillStyle = user === 'Exeless' ? "#00ffff" : "#ff00ff";
+                // Converte 3D para 2D simples
+                ctx.fillRect((canvas.width/2) + (p.x * 10), (canvas.height/2) + (p.z * 10), 20, 20);
+            }
+            requestAnimationFrame(render);
+        }
+        render();
+    </script>
+</body>
+</html>
